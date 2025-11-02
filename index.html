@@ -38,13 +38,7 @@
     .row .label{font-weight:600; font-size:14px}
     .row .desc{font-size:12px;color:var(--muted);margin-top:4px}
 
-    .info-icon {
-      position:absolute;
-      right:-24px;
-      color:var(--accent);
-      cursor:help;
-      font-weight:bold;
-    }
+    .info-icon { position:absolute; right:-24px; color:var(--accent); cursor:help; font-weight:bold; }
 
     .slider-wrap{display:grid; grid-template-columns:1fr 120px; gap:12px; align-items:center}
 
@@ -108,7 +102,7 @@
           </div>
           <div class="row">
             <div class="slider-wrap">
-              <input id="amountRange" type="range" min="1000" max="500000" step="100" value="50000"/>
+              <input id="amountRange" type="range" min="0" max="5000000" step="1" value="50000"/>
               <span class="pill" id="amountBadge">50&nbsp;000</span>
             </div>
           </div>
@@ -136,7 +130,7 @@
           </div>
           <div class="row">
             <div class="slider-wrap">
-              <input id="termRange" type="range" min="6" max="120" step="1" value="60"/>
+              <input id="termRange" type="range" min="1" max="360" step="1" value="60"/>
               <span class="pill" id="termBadge">60 mies.</span>
             </div>
           </div>
@@ -164,7 +158,7 @@
             </div>
             <div class="row">
               <div class="label">Kwota nadpłaty [PLN]</div>
-              <input id="prepayAmount" type="number" min="0" step="100" value="10000" />
+              <input id="prepayAmount" type="number" min="0" step="any" value="10000" />
             </div>
             <div class="row">
               <div class="label">Strategia po nadpłacie</div>
@@ -183,7 +177,434 @@
           </div>
         </div>
       </section>
+
+      <section class="card">
+        <div class="inner">
+          <h2 style="margin:0 0 8px 0; font-size:18px">Podsumowanie</h2>
+          <div class="summary" id="summary">
+            <div class="metric"><div class="k">Rata początkowa</div><div class="v" id="mPayment">–</div></div>
+            <div class="metric"><div class="k">Łączne odsetki</div><div class="v" id="mInterest">–</div></div>
+            <div class="metric"><div class="k">Łącznie do spłaty</div><div class="v" id="mTotal">–</div></div>
+          </div>
+          <div class="flex" style="margin-top:10px">
+            <span class="note">Wyniki w PLN, zaokrąglone do 2 miejsc.</span>
+            <div class="right actions">
+              <button class="btn secondary" id="csvBtn">Eksportuj CSV</button>
+              <button class="btn secondary" id="collapseBtn">Zwiń/Rozwiń tabelę</button>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
+
+    <section class="card" style="margin-top:20px">
+      <div class="inner">
+        <div class="flex" style="justify-content:space-between; align-items:center">
+          <h2 style="margin:0; font-size:18px">Harmonogram spłaty</h2>
+          <span class="pill" id="rowsInfo">0 pozycji</span>
+        </div>
+        <div class="table-wrap" id="tableWrap">
+          <table id="schedule">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Rata</th>
+                <th>Kapitał</th>
+                <th>Odsetki</th>
+                <th>Saldo po</th>
+                <th>Uwagi</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:20px">
+      <div class="inner">
+        <div class="flex" style="justify-content:space-between; align-items:center">
+          <h2 style="margin:0; font-size:16px">Testy wbudowane</h2>
+          <button class="btn secondary" id="runTests">Uruchom testy</button>
+        </div>
+        <ul id="testsOut" class="note" style="margin:10px 0 0 0; padding-left:18px"></ul>
+      </div>
+    </section>
+
+    <p class="note" style="margin-top:10px">Uwaga: kalkulator nie uwzględnia prowizji bankowych, ubezpieczeń, ani zmiennej stopy – zakłada stałe nominalne % w skali roku.</p>
   </div>
+
+<script>
+(function(){
+  const fmtPLN = (x) => Number(x).toLocaleString('pl-PL', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+  // Inicjalizacja trybu okresu zanim jest użyty
+  let termMode = 'months';
+
+  const els = {
+    amountInput: document.getElementById('amountInput'),
+    amountRange: document.getElementById('amountRange'),
+    amountBadge: document.getElementById('amountBadge'),
+    rateInput: document.getElementById('rateInput'),
+    rateRange: document.getElementById('rateRange'),
+    rateBadge: document.getElementById('rateBadge'),
+    termInput: document.getElementById('termInput'),
+    termRange: document.getElementById('termRange'),
+    termBadge: document.getElementById('termBadge'),
+    modeMonths: document.getElementById('modeMonths'),
+    modeYears: document.getElementById('modeYears'),
+    prepayToggle: document.getElementById('prepayToggle'),
+    prepayFields: document.getElementById('prepayFields'),
+    prepayMonth: document.getElementById('prepayMonth'),
+    prepayAmount: document.getElementById('prepayAmount'),
+    prepayStrategy: document.getElementById('prepayStrategy'),
+    mPayment: document.getElementById('mPayment'),
+    mInterest: document.getElementById('mInterest'),
+    mTotal: document.getElementById('mTotal'),
+    scheduleBody: document.querySelector('#schedule tbody'),
+    rowsInfo: document.getElementById('rowsInfo'),
+    csvBtn: document.getElementById('csvBtn'),
+    calcBtn: document.getElementById('calcBtn'),
+    resetBtn: document.getElementById('resetBtn'),
+    saveBtn: document.getElementById('saveBtn'),
+    loadBtn: document.getElementById('loadBtn'),
+    collapseBtn: document.getElementById('collapseBtn'),
+    tableWrap: document.getElementById('tableWrap'),
+    runTests: document.getElementById('runTests'),
+    testsOut: document.getElementById('testsOut')
+  };
+
+  // --- FIX: przenieś deklarację i użycie recalcTimer PRZED jakimikolwiek odwołaniami ---
+  let recalcTimer = null;
+  function scheduleRecalc(){
+    clearTimeout(recalcTimer);
+    recalcTimer = setTimeout(calculate, 50);
+  }
+
+  // Dwukierunkowa synchronizacja zakres<->pole + odświeżanie badge i auto-przeliczenie
+  function syncPair(rangeEl, inputEl, badgeEl, formatBadge){
+    const renderFromRange = () => {
+      inputEl.value = rangeEl.value;
+      badgeEl && (badgeEl.textContent = formatBadge(rangeEl.value));
+      scheduleRecalc();
+    };
+    const renderFromInput = () => {
+      const v = inputEl.value === '' ? 0 : Number(inputEl.value);
+      if(rangeEl.min !== '') rangeEl.value = Math.min(Math.max(v, Number(rangeEl.min)), Number(rangeEl.max));
+      else rangeEl.value = v;
+      badgeEl && (badgeEl.textContent = formatBadge(rangeEl.value));
+      scheduleRecalc();
+    };
+    rangeEl.addEventListener('input', renderFromRange);
+    inputEl.addEventListener('input', renderFromInput);
+    renderFromRange();
+  }
+
+  syncPair(els.amountRange, els.amountInput, els.amountBadge, v=>Number(v).toLocaleString('pl-PL'));
+  syncPair(els.rateRange, els.rateInput, els.rateBadge, v=>String(Number(v).toLocaleString('pl-PL', {minimumFractionDigits:2, maximumFractionDigits:2})).replace('.',',')+'%');
+  syncPair(els.termRange, els.termInput, els.termBadge, v=>termMode==='months'?(`${v} mies.`):(`${v} lat`));
+
+  // Term mode (months / years)
+  function setMode(mode){
+    termMode = mode;
+    els.modeMonths.setAttribute('aria-pressed', mode==='months');
+    els.modeYears.setAttribute('aria-pressed', mode==='years');
+    if(mode==='months'){
+      els.termBadge.textContent = `${els.termInput.value} mies.`;
+    } else {
+      els.termBadge.textContent = `${els.termInput.value} lat`;
+    }
+    scheduleRecalc();
+  }
+  els.modeMonths.addEventListener('click', ()=>setMode('months'));
+  els.modeYears.addEventListener('click', ()=>setMode('years'));
+
+  // Prepay toggle
+  els.prepayToggle.addEventListener('change',()=>{
+    els.prepayFields.style.display = els.prepayToggle.checked ? 'block' : 'none';
+  });
+
+  // Storage helpers
+  const KEY = 'loanCalcSettingsV1';
+  els.saveBtn.addEventListener('click', ()=>{
+    const data = collectInputs();
+    localStorage.setItem(KEY, JSON.stringify(data));
+    alert('Zapisano ustawienia.');
+  });
+  els.loadBtn.addEventListener('click', ()=>{
+    const raw = localStorage.getItem(KEY);
+    if(!raw){ alert('Brak zapisanych ustawień.'); return; }
+    const d = JSON.parse(raw);
+    applyInputs(d);
+  });
+
+  function collectInputs(){
+    return {
+      amount: +els.amountInput.value,
+      rate: +els.rateInput.value,
+      term: +els.termInput.value,
+      termMode,
+      type: document.querySelector('input[name="type"]:checked')?.value || 'annuity',
+      prepayEnabled: els.prepayToggle.checked,
+      prepayMonth: +els.prepayMonth.value,
+      prepayAmount: +els.prepayAmount.value,
+      prepayStrategy: els.prepayStrategy.value
+    };
+  }
+  function applyInputs(d){
+    els.amountInput.value = d.amount;
+    els.amountRange.value = Math.min(Math.max(d.amount, Number(els.amountRange.min)), Number(els.amountRange.max));
+    els.amountBadge.textContent = Number(els.amountRange.value).toLocaleString('pl-PL');
+
+    els.rateInput.value = d.rate;
+    els.rateRange.value = Math.min(Math.max(d.rate, Number(els.rateRange.min)), Number(els.rateRange.max));
+    els.rateBadge.textContent = String(Number(els.rateRange.value).toLocaleString('pl-PL', {minimumFractionDigits:2, maximumFractionDigits:2})).replace('.',',')+'%';
+
+    setMode(d.termMode||'months');
+    els.termInput.value = d.term;
+    els.termRange.value = Math.min(Math.max(d.term, Number(els.termRange.min)), Number(els.termRange.max));
+    els.termBadge.textContent = termMode==='months' ? `${els.termInput.value} mies.` : `${els.termInput.value} lat`;
+
+    const t = d.type||'annuity';
+    const radio = document.querySelector(`input[name="type"][value="${t}"]`);
+    if(radio) radio.checked = true;
+
+    els.prepayToggle.checked = !!d.prepayEnabled; els.prepayFields.style.display = els.prepayToggle.checked?'block':'none';
+    els.prepayMonth.value = d.prepayMonth||12;
+    els.prepayAmount.value = d.prepayAmount||0;
+    els.prepayStrategy.value = d.prepayStrategy||'shorten';
+  }
+
+  els.resetBtn.addEventListener('click', ()=>{
+    applyInputs({amount:50000, rate:9.99, term:60, termMode:'months', type:'annuity', prepayEnabled:false, prepayMonth:12, prepayAmount:10000, prepayStrategy:'shorten'});
+    clearTable();
+    updateSummary(0,0,0);
+  });
+
+  // Przeliczanie
+  function calculate(){
+    const {amount, rate, term, termMode:tm, type, prepayEnabled, prepayMonth, prepayAmount, prepayStrategy} = collectInputs();
+    if(!amount || !term){ clearTable(); updateSummary(0,0,0); return; }
+    const n = tm==='months' ? Math.max(1, Math.floor(term)) : Math.max(1, Math.floor(term*12));
+    const r = (rate/100)/12; // miesięczna stopa
+
+    let schedule = [];
+    let principal = Math.max(0, amount);
+    let annuityPayment = 0;
+
+    if(type==='annuity'){
+      annuityPayment = r>0 ? principal * r / (1 - Math.pow(1+r, -n)) : principal / n;
+    }
+
+    const addRow = (i, payment, capital, interest, balance, note='')=>{
+      schedule.push({i, payment, capital, interest, balance, note});
+    }
+
+    function finishToZero(startIndex, monthsLeft, pmt, rMonthly, principalStart){
+      let bal = principalStart;
+      let idx = startIndex;
+      let count = monthsLeft;
+      while(bal > 0 && count>0){
+        let interest = rMonthly>0 ? bal * rMonthly : 0;
+        let capital = Math.min(pmt - interest, bal);
+        let payment = capital + interest;
+        bal = +(bal - capital).toFixed(10);
+        addRow(idx++, payment, capital, interest, Math.max(0, bal));
+        count--;
+      }
+      while(bal > 0 && pmt>0){
+        let interest = rMonthly>0 ? bal * rMonthly : 0;
+        let capital = Math.min(pmt - interest, bal);
+        let payment = capital + interest;
+        bal = +(bal - capital).toFixed(10);
+        addRow(idx++, payment, capital, interest, Math.max(0, bal));
+      }
+      return idx-1;
+    }
+
+    if(type==='annuity'){
+      let i = 1; let bal = principal;
+      for(; i<=n; i++){
+        let interest = r>0 ? bal * r : 0;
+        let capital = Math.min(annuityPayment - interest, bal);
+        let payment = capital + interest;
+        bal = +(bal - capital).toFixed(10);
+        let note = '';
+        if(prepayEnabled && i===Math.floor(prepayMonth)){
+          const extra = Math.min(prepayAmount, Math.max(0, bal));
+          if(extra>0){
+            bal = +(bal - extra).toFixed(10);
+            note = `Nadpłata ${fmtPLN(extra)}`;
+            if(prepayStrategy==='lower'){
+              const remain = n - i;
+              const newPmt = r>0 ? bal * r / (1 - Math.pow(1+r, -remain)) : (remain>0? bal/remain : bal);
+              addRow(i, payment+extra, capital+extra, interest, Math.max(0, bal), note);
+              i = finishToZero(i+1, remain, newPmt, r, bal)+1; 
+              break;
+            } else {
+              addRow(i, payment+extra, capital+extra, interest, Math.max(0, bal), note);
+              i = finishToZero(i+1, n - i, annuityPayment, r, bal)+1;
+              break;
+            }
+          }
+        }
+        addRow(i, payment, capital, interest, Math.max(0, bal), note);
+        if(bal<=0) break;
+      }
+    } else {
+      // malejące
+      let equalCapital = principal / n;
+      let bal = principal;
+      for(let i=1; i<=n; i++){
+        let interest = r>0 ? bal * r : 0;
+        let capital = Math.min(equalCapital, bal);
+        let payment = capital + interest;
+        let note = '';
+        if(prepayEnabled && i===Math.floor(prepayMonth)){
+          const extra = Math.min(prepayAmount, Math.max(0, bal - capital));
+          if(extra>0){
+            note = `Nadpłata ${fmtPLN(extra)}`;
+            if(prepayStrategy==='lower'){
+              payment += extra; capital += extra; bal = +(bal - capital).toFixed(10);
+              addRow(i, payment, capital, interest, Math.max(0, bal), note);
+              const remain = n - i;
+              if(remain>0){
+                equalCapital = bal / remain;
+                for(let k=1; k<=remain; k++){
+                  let int2 = r>0 ? bal * r : 0;
+                  let cap2 = Math.min(equalCapital, bal);
+                  let pay2 = cap2 + int2;
+                  bal = +(bal - cap2).toFixed(10);
+                  addRow(i+k, pay2, cap2, int2, Math.max(0, bal));
+                  if(bal<=0) break;
+                }
+              }
+              break;
+            } else {
+              payment += extra; capital += extra; bal = +(bal - capital).toFixed(10);
+              addRow(i, payment, capital, interest, Math.max(0, bal), note);
+              let idx = i+1;
+              while(bal>0){
+                let int2 = r>0 ? bal * r : 0;
+                let cap2 = Math.min(equalCapital, bal);
+                let pay2 = cap2 + int2;
+                bal = +(bal - cap2).toFixed(10);
+                addRow(idx++, pay2, cap2, int2, Math.max(0, bal));
+              }
+              break;
+            }
+          } else {
+            bal = +(bal - capital).toFixed(10);
+            addRow(i, payment, capital, interest, Math.max(0, bal), note);
+          }
+        } else {
+          bal = +(bal - capital).toFixed(10);
+          addRow(i, payment, capital, interest, Math.max(0, bal), note);
+        }
+        if(bal<=0) break;
+      }
+    }
+
+    // Suma
+    const sumInterest = schedule.reduce((a,b)=>a+b.interest,0);
+    const sumPayment = schedule.reduce((a,b)=>a+b.payment,0);
+
+    renderTable(schedule);
+    updateSummary(schedule[0]?.payment||0, sumInterest, sumPayment);
+  }
+
+  function renderTable(rows){
+    clearTable();
+    const frag = document.createDocumentFragment();
+    rows.forEach(r=>{
+      const tr = document.createElement('tr');
+      const td = (t, alignRight=true)=>{ const x = document.createElement('td'); x.textContent = t; if(!alignRight) x.style.textAlign='left'; return x; };
+      tr.appendChild(td(r.i, false));
+      tr.appendChild(td(fmtPLN(r.payment)));
+      tr.appendChild(td(fmtPLN(r.capital)));
+      tr.appendChild(td(fmtPLN(r.interest)));
+      tr.appendChild(td(fmtPLN(Math.max(0,r.balance))));
+      tr.appendChild(td(r.note || '—'));
+      frag.appendChild(tr);
+    });
+    els.scheduleBody.appendChild(frag);
+    els.rowsInfo.textContent = `${rows.length} pozycji`;
+  }
+  function clearTable(){ els.scheduleBody.innerHTML=''; els.rowsInfo.textContent = '0 pozycji'; }
+
+  function updateSummary(pmt, interest, total){
+    els.mPayment.textContent = pmt? `${fmtPLN(pmt)} PLN` : '–';
+    els.mInterest.textContent = interest? `${fmtPLN(interest)} PLN` : '–';
+    els.mTotal.textContent = total? `${fmtPLN(total)} PLN` : '–';
+  }
+
+  // CSV export
+  els.csvBtn.addEventListener('click', ()=>{
+    const rows = [["#","Rata","Kapitał","Odsetki","Saldo po","Uwagi"]];
+    document.querySelectorAll('#schedule tbody tr').forEach(tr=>{
+      rows.push([...tr.children].map(td=>td.textContent.replace(/\u00A0/g,' ')));
+    });
+    const csv = rows.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}`+`"`).join(';')).join('\n');
+    const blob = new Blob(["\ufeff"+csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'harmonogram.csv'; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+  });
+
+  // Collapse
+  let collapsed=false;
+  els.collapseBtn.addEventListener('click', ()=>{
+    collapsed = !collapsed;
+    els.tableWrap.style.maxHeight = collapsed ? '0px' : '420px';
+    els.tableWrap.style.overflow = collapsed ? 'hidden' : 'auto';
+  });
+
+  els.calcBtn.addEventListener('click', calculate);
+
+  // Testy
+  function runTests(){
+    const out = [];
+    const push = (name, pass, detail='')=> out.push({name, pass, detail});
+
+    // Test 1
+    (function(){
+      const amount=12000, rate=0, term=12; const r=0; const n=12; const expected=amount/n;
+      const pmt = r>0 ? amount*r/(1-Math.pow(1+r,-n)) : amount/n;
+      push('Annuitet r=0', Math.abs(pmt-expected)<1e-8, `pmt=${pmt}, exp=${expected}`);
+    })();
+
+    // Test 2
+    (function(){
+      const amount=10000, rate=12, n=10, r=rate/100/12; let bal=amount; const cap=amount/n;
+      const first = cap + bal*r; bal -= cap; let last=first; for(let i=2;i<=n;i++){ last = cap + bal*r; bal -= cap; }
+      push('Malejące: pierwsza>ostatnia', first>last, `first=${first}, last=${last}`);
+    })();
+
+    // Test 3
+    (function(){
+      const amount=50000, rate=10, n=24, r=rate/100/12; const pmt = amount*r/(1-Math.pow(1+r,-n));
+      let bal=amount, sum=0; for(let i=1;i<=n;i++){ let int=bal*r, cap=pmt-int; bal-=cap; sum+=pmt; }
+      let base=sum;
+      bal=amount; sum=0; for(let i=1;i<=n;i++){ let int=bal*r, cap=pmt-int; bal-=cap; sum+=pmt; if(i===6){ bal-=10000; sum+=10000; if(bal<0) bal=0; } if(bal<=0) break; }
+      push('Nadpłata skraca sumę', sum<base, `base=${base}, with=${sum}`);
+    })();
+
+    // Test 4: Debounce nie rzuca błędem przy wielokrotnym wywołaniu
+    (function(){
+      let ok = true; let msg = '';
+      try { scheduleRecalc(); scheduleRecalc(); scheduleRecalc(); } catch(e){ ok = false; msg = e?.message||String(e); }
+      push('Debounce: scheduleRecalc bez błędów', ok, msg||'OK');
+    })();
+
+    els.testsOut.innerHTML = out.map(r=>`<li>${r.pass? '✅':'❌'} <strong>${r.name}</strong> <span class="note">${r.detail}</span></li>`).join('');
+  }
+  els.runTests.addEventListener('click', runTests);
+
+  // Start
+  setMode('months');
+  calculate();
+})();
+</script>
 </body>
 </html>
