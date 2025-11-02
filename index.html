@@ -235,6 +235,12 @@
             <div class="metric"><div class="k">Łączne odsetki</div><div class="v" id="mInterest">–</div></div>
             <div class="metric"><div class="k">Łącznie do spłaty</div><div class="v" id="mTotal">–</div></div>
           </div>
+          <div class="summary" id="earlySummary" style="margin-top:12px">
+            <div class="metric"><div class="k">Odsetki przy spłacie po 3 mies.</div><div class="v" id="mInt3">–</div></div>
+            <div class="metric"><div class="k">Odsetki przy spłacie po 6 mies.</div><div class="v" id="mInt6">–</div></div>
+            <div class="metric"><div class="k">Odsetki przy spłacie po 12 mies.</div><div class="v" id="mInt12">–</div></div>
+            <div class="metric"><div class="k">Odsetki przy spłacie po 24 mies.</div><div class="v" id="mInt24">–</div></div>
+          </div>
           <div class="flex" style="margin-top:10px">
             <span class="note">Wyniki w PLN, zaokrąglone do 2 miejsc.</span>
             <div class="right actions">
@@ -337,7 +343,11 @@
     collapseBtn: document.getElementById('collapseBtn'),
     tableWrap: document.getElementById('tableWrap'),
     runTests: document.getElementById('runTests'),
-    testsOut: document.getElementById('testsOut')
+    testsOut: document.getElementById('testsOut'),
+    mInt3: document.getElementById('mInt3'),
+    mInt6: document.getElementById('mInt6'),
+    mInt12: document.getElementById('mInt12'),
+    mInt24: document.getElementById('mInt24')
   };
 
   // Debounce timer PRZED użyciem
@@ -516,6 +526,34 @@
 
   // Przeliczanie
   function calculate(){
+    // pomocniczo generujemy bazowy harmonogram (bez nadpłat) do wyliczeń "spłaty po X miesiącach"
+    function generateBaseSchedule(amount, monthlyRate, months, type){
+      const rows=[];
+      let bal=amount;
+      if(type==='annuity'){
+        const pmt = monthlyRate>0 ? amount*monthlyRate/(1-Math.pow(1+monthlyRate,-months)) : amount/months;
+        for(let i=1;i<=months;i++){
+          const interest = monthlyRate>0 ? bal*monthlyRate : 0;
+          const capital = Math.min(pmt - interest, bal);
+          const payment = capital + interest;
+          bal = +(bal - capital).toFixed(10);
+          rows.push({i,payment,capital,interest,balance:Math.max(0,bal)});
+          if(bal<=0) break;
+        }
+      } else {
+        const cap = amount / months;
+        for(let i=1;i<=months;i++){
+          const interest = monthlyRate>0 ? bal*monthlyRate : 0;
+          const capital = Math.min(cap, bal);
+          const payment = capital + interest;
+          bal = +(bal - capital).toFixed(10);
+          rows.push({i,payment,capital,interest,balance:Math.max(0,bal)});
+          if(bal<=0) break;
+        }
+      }
+      return rows;
+    }
+
     const {amount, rate, term, termMode:tm, type, prepayEnabled, prepayMonth, prepayAmount, prepayStrategy} = collectInputs();
     if(!amount || !term){ clearTable(); updateSummary(0,0,0); return; }
     const n = tm==='months' ? Math.max(1, Math.floor(term)) : Math.max(1, Math.floor(term*12));
@@ -644,6 +682,14 @@
 
     renderTable(schedule);
     updateSummary(schedule[0]?.payment||0, sumInterest, sumPayment);
+
+    // Obliczenia odsetek przy wcześniejszej spłacie całości po 3/6/12/24 miesiącach (bez uwzględniania innych nadpłat)
+    const base = generateBaseSchedule(principal, r, n, type);
+    const sumTo = (m)=> base.slice(0, Math.min(m, base.length)).reduce((a,b)=>a+b.interest, 0);
+    els.mInt3.textContent = base.length? `${fmtPLN(sumTo(3))} PLN` : '–';
+    els.mInt6.textContent = base.length? `${fmtPLN(sumTo(6))} PLN` : '–';
+    els.mInt12.textContent = base.length? `${fmtPLN(sumTo(12))} PLN` : '–';
+    els.mInt24.textContent = base.length? `${fmtPLN(sumTo(24))} PLN` : '–';
   }
 
   function renderTable(rows){
